@@ -1,0 +1,88 @@
+name: "infra preview & deploy"
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 10_infra/**
+      - .github/workflows/**
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-1
+  TF_VERSION: 1.2.8
+  TF_PROJECT: test-alb-routing
+  TF_ENVIRONMENT: dev
+
+defaults:
+  run:
+    shell: bash
+    working-directory: "10_infra/"
+
+jobs:
+  preview:
+    name: "preview"
+    runs-on: ubuntu-latest
+    outputs:
+      TF_PLAN_EXITCODE: ${{  steps.plan.outputs.exitcode  }}
+    steps:
+      - name: CheckOut repository
+        uses: actions/checkout@v4
+      - name: SetUp terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{  env.TF_VERSION  }}
+      - name: Terraform format
+        run: |
+          terraform fmt -check
+      - name: Configure AWS Credential
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{  env.AWS_REGION  }}
+          role-to-assume: ${{  secrets.AWS_IAM_ROLE_ARN  }}
+      - name: Terraform init
+        run: |
+          terraform init -no-color
+      - name: Terraform Validate
+        run: |
+          terraform validate -no-color
+      - name: Terraform plan
+        id: plan
+        continue-on-error: true
+        run: |
+          terraform plan \
+            -no-color \
+            -detailed-exitcode
+  deploy:
+    name: "Deploy"
+    needs: preview
+    if: needs.preview.outputs.TF_PLAN_EXITCODE == 2
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - name: CheckOut repository
+        uses: actions/checkout@v4
+      - name: SetUp terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{  env.TF_VERSION  }}
+      - name: Terraform format
+        run: |
+          terraform fmt -check
+      - name: Configure AWS Credential
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{  env.AWS_REGION  }}
+          role-to-assume: ${{  secrets.AWS_IAM_ROLE_ARN  }}
+      - name: Terraform init
+        run: |
+          terraform init -no-color
+      - name: Terraform apply
+        id: apply
+        run: |
+          terraform apply -auto-approve
